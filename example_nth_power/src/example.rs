@@ -3,14 +3,16 @@ use halo2_proofs::{arithmetic::FieldExt, circuit::*, plonk::*, poly::Rotation};
 
 // Generate halo2 zkp proof for n-th power of an integer.
 // More formally, it prove the relation R = { ( x, y; exp): x^exp = y } where public input x,y and private input exp.
-// The public/private input setting can be chaged easily.
+// The public/private input setting can be chaged.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct PowerByNumConfig {
     pub col_a: Column<Advice>,
     pub col_b: Column<Advice>,
     pub col_c: Column<Advice>,
     pub selector: Selector,
     pub instance: Column<Instance>,
+    pub constant: Column<Fixed>,
 }
 
 #[derive(Debug, Clone)]
@@ -33,11 +35,13 @@ impl<F: FieldExt> PowerByNumChip<F> {
         let col_c = meta.advice_column();
         let selector = meta.selector();
         let instance = meta.instance_column();
+        let constant = meta.fixed_column();
 
         meta.enable_equality(col_a);
         meta.enable_equality(col_b);
         meta.enable_equality(col_c);
         meta.enable_equality(instance);
+        meta.enable_constant(constant);
 
         meta.create_gate("mul", |meta| {
 
@@ -54,6 +58,7 @@ impl<F: FieldExt> PowerByNumChip<F> {
             col_c,
             selector,
             instance,
+            constant,
         }
     }
 
@@ -66,22 +71,21 @@ impl<F: FieldExt> PowerByNumChip<F> {
             |mut region| {
                 self.config.selector.enable(&mut region, 0)?;
 
-                let init_a = region.assign_advice_from_instance(
-                    || "ins1",
-                    self.config.instance,
-                    0,
+                let init_a = region.assign_advice_from_constant(
+                    || "constant",
                     self.config.col_a,
-                    0)?;
+                    0,
+                    F::from(1))?;
 
                 let init_b = region.assign_advice_from_instance(
-                    || "ins2",
+                    || "instance",
                     self.config.instance,
-                    1,
+                    0,
                     self.config.col_b,
                     0)?;
 
                 let init_c = region.assign_advice(
-                    || "ins1 * ins2",
+                    || "init_a * init_b",
                     self.config.col_c,
                     0,
                     || init_a.value().copied() * init_b.value(),
@@ -162,31 +166,37 @@ impl<F: FieldExt> Circuit<F> for TestCircuit<F> {
     ) -> Result<(), Error> {
         let chip = PowerByNumChip::construct(config);
 
-        let (mut prev_a, 
+        let (_, 
             prev_b, 
             mut prev_c) =
             chip.intial_assign(layouter.namespace(|| "first region"))?;
 
-        for _i in 0..3 {
+        /* to check the initially assigned values */
+        // println!("{}", format!("{:=<95}", ""));
+        // println!("col_a[0]: {:?}", prev_a.value().copied());
+        // println!("col_b[0]: {:?}", prev_b.value().copied());
+        // println!("col_c[0]: {:?}", prev_c.value().copied());
 
-            // to check the assigned values
-            println!("{}", format!("{:=<95}", ""));
-            println!("a[{}]: {:?}", _i, prev_a.value().copied());
-            println!("b[{}]: {:?}", _i, prev_b.value().copied());
-            println!("c[{}]: {:?}", _i, prev_c.value().copied());
+        for _i in 1..12 {
 
             // store the intended value to a region
             let tmp_c = chip.subsequent_assign(
                 layouter.namespace(|| "subsequent region"), 
                 &prev_b, 
                 &prev_c)?;
+
+            /* to check the assigned values */
+            // println!("{}", format!("{:=<95}", ""));
+            // println!("col_a[{}]: {:?}", _i, prev_c.value().copied());
+            // println!("col_b[{}]: {:?}", _i, prev_b.value().copied());
+            // println!("col_c[{}]: {:?}", _i, tmp_c.value().copied());
             
-            prev_a = prev_c;
             prev_c = tmp_c;
         }
-        println!("{}", format!("{:=<95}", ""));
 
-        chip.expose_public(layouter.namespace(|| "out"), &prev_c, 2)?;
+        // println!("{}", format!("{:=<95}", ""));
+
+        chip.expose_public(layouter.namespace(|| "out"), &prev_c, 1)?;
 
         Ok(())
     }
@@ -201,17 +211,18 @@ mod tests {
 
     #[test]
     fn example_test() {
-        let k = 4;
+        let k = 6;
 
-        let a = Fp::from(1); // ins1
-        let b = Fp::from(2); // ins2
-        let out = Fp::from(16); // expected result
+        let input = Fp::from(2); // input x
+        let output = Fp::from(4096); // expected result y
 
         let circuit = TestCircuit(PhantomData);
 
-        let public_input = vec![a, b, out];
+        let public_input = vec![input, output];
 
+        // runs a synthetic keygen-and-prove operation on the given circuit
         let prover = MockProver::run(k, &circuit, vec![public_input.clone()]).unwrap();
+        // println!("{:?}", prover);
         prover.assert_satisfied();
 
     }
