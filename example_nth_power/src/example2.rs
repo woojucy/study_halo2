@@ -1,5 +1,6 @@
+// Same with example1 but uses different library which is from PSE team
 use std::marker::PhantomData;
-use halo2_proofs::{arithmetic::FieldExt, circuit::*, plonk::*, poly::Rotation};
+use halo2::{halo2curves::ff::PrimeField, circuit::*, plonk::*, poly::Rotation};
 
 // Generate halo2 zkp proof for n-th power of an integer.
 // More formally, it prove the relation R = { ( x, y; exp): x^exp = y } where public input x,y and private input exp.
@@ -16,12 +17,12 @@ struct PowerByNumConfig {
 }
 
 #[derive(Debug, Clone)]
-struct PowerByNumChip<F: FieldExt> {
+struct PowerByNumChip<F: PrimeField> {
     config: PowerByNumConfig,
     _marker: PhantomData<F>,
 }
 
-impl<F: FieldExt> PowerByNumChip<F> {
+impl<F: PrimeField> PowerByNumChip<F> {
     pub fn construct(config: PowerByNumConfig) -> Self {
         Self {
             config,
@@ -29,7 +30,11 @@ impl<F: FieldExt> PowerByNumChip<F> {
         }
     }
 
-    pub fn configure(meta: &mut ConstraintSystem<F>) -> PowerByNumConfig {
+    pub fn configure(
+        meta: &mut ConstraintSystem<F>,
+
+    ) -> PowerByNumConfig {
+
         let col_a = meta.advice_column();
         let col_b = meta.advice_column();
         let col_c = meta.advice_column();
@@ -71,11 +76,41 @@ impl<F: FieldExt> PowerByNumChip<F> {
             |mut region| {
                 self.config.selector.enable(&mut region, 0)?;
 
+                // let const_one = F::from(1);
+                
+                // region.assign_fixed(
+                //     || "set constant",
+                //     self.config.constant,
+                //     0,
+                //     || Value::known(const_one)
+                // )?;
+
+                //(region, 0, Value::known(const_one))?;
+                // region.constrain_constant(const_one.cell()
+                    // , const_one);
+                // 이렇게 바꿨을때 값 문제 없이 잘 돌아가는지, 그리고 이전 버전에서 정확히 어떻게 문제가 되는지 확인
+                // enable constant하면 enable equlity도 같이 켜지는데 이부분 확인.. 뭔가 사용하지않을까
                 let init_a = region.assign_advice_from_constant(
                     || "constant",
                     self.config.col_a,
                     0,
-                    F::from(1))?;
+                    F::from(1)
+                )?;
+
+                    // fn assign_advice_from_constant<'v>(
+                    //     &'v mut self,
+                    //     annotation: &'v (dyn Fn() -> String + 'v),
+                    //     column: Column<Advice>,
+                    //     offset: usize,
+                    //     constant: Assigned<F>,
+                    // ) -> Result<Cell, Error> {
+                    //     let advice =
+                    //         self.assign_advice(annotation, column, offset, &mut || Value::known(constant))?;
+                    //     self.constrain_constant(advice, constant)?;
+                
+                    //     Ok(advice)
+
+                
 
                 let init_b = region.assign_advice_from_instance(
                     || "instance",
@@ -100,7 +135,7 @@ impl<F: FieldExt> PowerByNumChip<F> {
         &self,
         mut layouter: impl Layouter<F>,
         prev_b: &AssignedCell<F, F>,
-        prev_c: &AssignedCell<F, F>,
+        prev_c: &AssignedCell<F, F>, 
     ) -> Result<AssignedCell<F, F>, Error> {
         layouter.assign_region(
             || "subsequent row",
@@ -147,7 +182,7 @@ impl<F: FieldExt> PowerByNumChip<F> {
 #[derive(Default)]
 struct TestCircuit<F>(PhantomData<F>);
 
-impl<F: FieldExt> Circuit<F> for TestCircuit<F> {
+impl<F: PrimeField> Circuit<F> for TestCircuit<F> {
     type Config = PowerByNumConfig;
     type FloorPlanner = SimpleFloorPlanner;
 
@@ -172,29 +207,30 @@ impl<F: FieldExt> Circuit<F> for TestCircuit<F> {
             chip.intial_assign(layouter.namespace(|| "first region"))?;
 
         /* to check the initially assigned values */
-        // println!("{}", format!("{:=<95}", ""));
-        // println!("col_a[0]: {:?}", prev_a.value().copied());
-        // println!("col_b[0]: {:?}", prev_b.value().copied());
-        // println!("col_c[0]: {:?}", prev_c.value().copied());
+        println!("{}", format!("{:=<95}", ""));
+        //println!("col_a[0]: {:?}", prev_a.value().copied());
+        println!("col_b[0]: {:?}", prev_b.value().copied());
+        println!("col_c[0]: {:?}", prev_c.value().copied());
 
-        for _i in 1..12 {
+        for _i in 1..2 {
 
             // store the intended value to a region
-            let tmp_c = chip.subsequent_assign(
+            let tmp_c =
+             chip.subsequent_assign(
                 layouter.namespace(|| "subsequent region"), 
                 &prev_b, 
                 &prev_c)?;
 
             /* to check the assigned values */
-            // println!("{}", format!("{:=<95}", ""));
-            // println!("col_a[{}]: {:?}", _i, prev_c.value().copied());
-            // println!("col_b[{}]: {:?}", _i, prev_b.value().copied());
-            // println!("col_c[{}]: {:?}", _i, tmp_c.value().copied());
+            println!("{}", format!("{:=<95}", ""));
+            println!("col_a[{}]: {:?}", _i, prev_c.value().copied());
+            println!("col_b[{}]: {:?}", _i, prev_b.value().copied());
+            println!("col_c[{}]: {:?}", _i, tmp_c.value().copied());
             
             prev_c = tmp_c;
         }
 
-        // println!("{}", format!("{:=<95}", ""));
+        println!("{}", format!("{:=<95}", ""));
 
         chip.expose_public(layouter.namespace(|| "out"), &prev_c, 1)?;
 
@@ -207,14 +243,14 @@ mod tests {
     use std::marker::PhantomData;
 
     use super::TestCircuit;
-    use halo2_proofs::{dev::MockProver, pasta::Fp};
+    use halo2::{halo2curves::bn256::Fr, dev::MockProver};
 
     #[test]
-    fn example_test() {
-        let k = 6;
+    fn example_test2() {
+        let k = 3;
 
-        let input = Fp::from(2); // input x
-        let output = Fp::from(4096); // expected result y
+        let input = Fr::from(2); // input x
+        let output = Fr::from(4); // expected result y
 
         let circuit = TestCircuit(PhantomData);
 
@@ -222,7 +258,7 @@ mod tests {
 
         // runs a synthetic keygen-and-prove operation on the given circuit
         let prover = MockProver::run(k, &circuit, vec![public_input.clone()]).unwrap();
-        // println!("{:?}", prover);
+        println!("{:?}", prover);
         prover.assert_satisfied();
 
     }
