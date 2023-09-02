@@ -1,9 +1,18 @@
-use halo2_proofs::{arithmetic::FieldExt, circuit::*, plonk::*, poly::Rotation};
+use halo2_proofs::{
+    arithmetic::FieldExt,
+    circuit::*,
+    pasta::{vesta, Fp},
+    plonk::*,
+    poly::commitment::Params,
+    poly::Rotation,
+    transcript::{Blake2bRead, Blake2bWrite, Challenge255},
+};
 use std::marker::PhantomData;
 
-// Generate halo2 zkp proof for n-th power of an integer.
-// More formally, it prove the relation R = { ( x, y; exp): x^exp = y } where public input x,y and private input exp.
-// The public/private input setting can be chaged.
+// bench-mark tool
+use criterion::{criterion_group, criterion_main, Criterion};
+use rand::rngs::OsRng;
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 struct PowerByNumConfig {
@@ -135,7 +144,7 @@ impl<F: FieldExt> PowerByNumChip<F> {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct TestCircuit<F>(PhantomData<F>);
 
 impl<F: FieldExt> Circuit<F> for TestCircuit<F> {
@@ -159,30 +168,15 @@ impl<F: FieldExt> Circuit<F> for TestCircuit<F> {
 
         let (_, prev_b, mut prev_c) = chip.intial_assign(layouter.namespace(|| "first region"))?;
 
-        /* to check the initially assigned values */
-        // println!("{}", format!("{:=<95}", ""));
-        // println!("col_a[0]: {:?}", prev_a.value().copied());
-        // println!("col_b[0]: {:?}", prev_b.value().copied());
-        // println!("col_c[0]: {:?}", prev_c.value().copied());
-
         for _i in 1..12 {
-            // store the intended value to a region
             let tmp_c = chip.subsequent_assign(
                 layouter.namespace(|| "subsequent region"),
                 &prev_b,
                 &prev_c,
             )?;
 
-            /* to check the assigned values */
-            // println!("{}", format!("{:=<95}", ""));
-            // println!("col_a[{}]: {:?}", _i, prev_c.value().copied());
-            // println!("col_b[{}]: {:?}", _i, prev_b.value().copied());
-            // println!("col_c[{}]: {:?}", _i, tmp_c.value().copied());
-
             prev_c = tmp_c;
         }
-
-        // println!("{}", format!("{:=<95}", ""));
 
         chip.expose_public(layouter.namespace(|| "out"), &prev_c, 1)?;
 
@@ -190,27 +184,74 @@ impl<F: FieldExt> Circuit<F> for TestCircuit<F> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::marker::PhantomData;
+const K: u32 = 7;
 
-    use super::TestCircuit;
-    use halo2_proofs::{dev::MockProver, pasta::Fp};
+fn bench_example(name: &str, c: &mut Criterion) {
+    let mut rng = OsRng;
+    let params: Params<vesta::Affine> = Params::new(K);
 
-    #[test]
-    fn example_test1() {
-        let k = 6;
+    let empty_circuit = TestCircuit(PhantomData);
+    let vk = keygen_vk(&params, &empty_circuit).expect("vk generation failed");
+    let pk = keygen_pk(&params, vk, &empty_circuit).expect("pk generation failed");
 
-        let input = Fp::from(2); // input x
-        let output = Fp::from(4096); // expected result y
+    let mut prover_name = "Measure prover time in ".to_string();
+    let mut verifier_name = "Measure verifier time in".to_string();
+    prover_name += name;
+    verifier_name += name;
 
-        let circuit = TestCircuit(PhantomData);
+    let input = Fp::from(2); // input
+    let output = Fp::from(4096); // expected result y
 
-        let public_input = vec![input, output];
+    let public_input = [input, output];
 
-        // runs a synthetic keygen-and-prove operation on the given circuit
-        let prover = MockProver::run(k, &circuit, vec![public_input.clone()]).unwrap();
-        println!("{:?}", prover);
-        prover.assert_satisfied();
-    }
+    let circuit = TestCircuit(PhantomData);
+
+    c.bench_function(&prover_name, |b| {
+        b.iter(|| {
+            let mut transcript = Blake2bWrite::<_, _, Challenge255<_>>::init(vec![]);
+            create_proof(
+                &params,
+                &pk,
+                &[circuit],
+                &[&[&public_input]],
+                &mut rng,
+                &mut transcript,
+            )
+            .expect("proof generation failed")
+        })
+    });
+
+    let mut transcript = Blake2bWrite::<_, _, Challenge255<_>>::init(vec![]);
+    create_proof(
+        &params,
+        &pk,
+        &[circuit],
+        &[&[&public_input]],
+        &mut rng,
+        &mut transcript,
+    )
+    .expect("proof generation failed");
+    let proof = transcript.finalize();
+
+    c.bench_function(&verifier_name, |b| {
+        b.iter(|| {
+            let strategy = SingleVerifier::new(&params);
+            let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
+            assert!(verify_proof(
+                &params,
+                pk.get_vk(),
+                strategy,
+                &[&[&public_input]],
+                &mut transcript
+            )
+            .is_ok());
+        });
+    });
 }
+
+fn criterion_benchmark(c: &mut Criterion) {
+    bench_example("example1", c);
+}
+
+criterion_group!(benches, criterion_benchmark);
+criterion_main!(benches);
