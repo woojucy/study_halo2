@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 // The public/private input setting can be chaged.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-struct PowerByNumConfig {
+pub struct PowerByNumConfig {
     pub col_a: Column<Advice>,
     pub col_b: Column<Advice>,
     pub col_c: Column<Advice>,
@@ -135,8 +135,8 @@ impl<F: FieldExt> PowerByNumChip<F> {
     }
 }
 
-#[derive(Default)]
-struct TestCircuit<F>(PhantomData<F>);
+#[derive(Default, Clone)]
+pub struct TestCircuit<F>(pub PhantomData<F>);
 
 impl<F: FieldExt> Circuit<F> for TestCircuit<F> {
     type Config = PowerByNumConfig;
