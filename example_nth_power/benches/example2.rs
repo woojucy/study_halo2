@@ -14,6 +14,7 @@ use halo2::{
     transcript::{TranscriptReadBuffer, TranscriptWriterBuffer},
 };
 use halo2curves::pasta::{EqAffine, Fp};
+use std::time::Duration;
 use std::{
     fs::File,
     io::{BufReader, Read, Write},
@@ -21,16 +22,17 @@ use std::{
     path::Path,
 };
 // bench-mark tool
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId, SamplingMode};
 use example::example2::TestCircuit;
 use rand::rngs::OsRng;
 
 // K is the dimension for the poly commit
-fn bench_example<const K: u32>(name: &str, c: &mut Criterion) {
+fn bench_example(k: u32, name: &str, c: &mut Criterion) {
+
     // Set the polynomial commitment parameters
     let params_path = Path::new("./benches/data/params_example2");
     if File::open(params_path).is_err() {
-        let params: ParamsIPA<EqAffine> = ParamsIPA::new(K);
+        let params: ParamsIPA<EqAffine> = ParamsIPA::new(k);
         let mut buf = Vec::new();
 
         params.write(&mut buf).expect("Failed to write params");
@@ -106,9 +108,16 @@ fn bench_example<const K: u32>(name: &str, c: &mut Criterion) {
     });
 }
 
-fn criterion_benchmark(c: &mut Criterion) {
-    bench_example::<3>("example2", c);
-}
+fn main() {
+    let mut criterion = Criterion::default();
+        // .sample_size(100)  // 샘플 크기 설정
+        // .nresamples(100);  // 반복 횟수 설정
 
-criterion_group!(benches, criterion_benchmark);
-criterion_main!(benches);
+    let benches: Vec<Box<dyn Fn(&mut Criterion)>> = vec![
+        Box::new(|c| bench_example(3, "example1", c)),
+    ];
+
+    for bench in benches {
+        bench(&mut criterion);
+    }
+}
